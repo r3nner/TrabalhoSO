@@ -98,6 +98,39 @@ int quadros_remove_vitima(quadros_t *self)
   return v;
 }
 
+void quadros_free_pid(quadros_t *self, int pid)
+{
+  if (!self) return;
+  // mark frames owned by pid as free
+  for (int i = 0; i < self->n_quadros; i++) {
+    if (!self->is_free[i] && self->owner_pid[i] == pid) {
+      self->is_free[i] = 1;
+      self->owner_pid[i] = -1;
+      self->owner_pagina[i] = -1;
+    }
+  }
+  // rebuild FIFO queue to remove freed frames
+  int new_tail = 0;
+  int new_count = 0;
+  for (int i = 0; i < self->fifo_count; i++) {
+    int idx = (self->fifo_head + i) % self->n_quadros;
+    int q = self->fifo_queue[idx];
+    if (!self->is_free[q]) {
+      self->fifo_queue[new_tail++] = q;
+      new_count++;
+    }
+  }
+  self->fifo_head = 0;
+  self->fifo_tail = new_tail % self->n_quadros;
+  self->fifo_count = new_count;
+}
+
+int quadros_numero_quadros(quadros_t *self)
+{
+  if (!self) return 0;
+  return self->n_quadros;
+}
+
 void quadros_assign(quadros_t *self, int quadro, int pid, int pagina)
 {
   if (quadro < 0 || quadro >= self->n_quadros) return;

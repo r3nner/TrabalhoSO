@@ -37,6 +37,12 @@ int quadros_owner_pid(quadros_t *self, int quadro);
 // obtém a página dona do quadro (ou -1 se livre)
 int quadros_owner_pagina(quadros_t *self, int quadro);
 
+// devolve todos os quadros pertencentes ao pid (marca-los livres)
+void quadros_free_pid(quadros_t *self, int pid);
+
+// retorna o número total de quadros
+int quadros_numero_quadros(quadros_t *self);
+
 // seleciona vítima usando LRU: recebe um callback para obter a 'age' da página
 // callback deve retornar true e preencher *page_age se a página existir, ou false caso contrário
 // a função user_data é repassada ao callback

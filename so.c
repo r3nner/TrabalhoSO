@@ -15,6 +15,7 @@
 #include "memoria.h"
 #include "programa.h"
 #include "tabpag.h"
+#include "sec_alloc.h"
 
 #include <stdlib.h>
 #include <stdbool.h>
@@ -90,9 +91,11 @@ processo_t *processo_cria(int pid, int tam_mem_virtual) {
   proc->tabpag = tabpag_cria();
   proc->tam_mem_virtual = tam_mem_virtual;
   proc->sec_base = -1;
+  proc->sec_size = 0;
   proc->page_faults = 0;
   proc->blocked_until = 0;
   proc->next = NULL;
+  proc->wait_pid = -1;
   return proc;
 }
 
@@ -152,12 +155,15 @@ so_t *so_cria(cpu_t *cpu, mem_t *mem, mem_t *mem_secundaria, mmu_t *mmu,
   self->console = console;
   self->erro_interno = false;
   self->proc_list = NULL;
+  self->fila_prontos = NULL;
   self->quadros = quadros_cria(self->mem);
   self->usar_lru = 1; // habilita LRU por padrão
   // disco: quando estará livre (em instruções)
   self->disco_livre_em = 0;
   // tempo (em instruções) para transferir UMA página entre mem e mem_sec
   self->tempo_transferencia_pagina = 50; // valor default, pode ser ajustado
+  // cria alocador para memória secundária
+  self->sec_alloc = sec_alloc_cria(mem_secundaria);
 
   cpu_define_chamaC(self->cpu, so_trata_interrupcao, self);
   // Não há tabela de páginas global, cada processo terá a sua
@@ -169,6 +175,7 @@ void so_destroi(so_t *self)
   cpu_define_chamaC(self->cpu, NULL, NULL);
   // destroi gerenciador de quadros se existir
   if (self->quadros) quadros_destroi(self->quadros);
+  if (self->sec_alloc) sec_alloc_destroi(self->sec_alloc);
   // destroi processos registrados
   processo_t *p = self->proc_list;
   while (p) {
@@ -176,6 +183,8 @@ void so_destroi(so_t *self)
     processo_destroi(p);
     p = nx;
   }
+  // libera fila de prontos
+  while (self->fila_prontos) fila_pop(&self->fila_prontos);
   free(self);
 }
 
@@ -250,15 +259,22 @@ static void so_trata_pendencias(so_t *self)
     self->erro_interno = true;
     return;
   }
-  // percorre lista de processos e desbloqueia os que expiraram
+  // percorre lista de processos e desbloqueia os que expiraram ou cujo wait_pid terminou
   processo_t *p = self->proc_list;
   while (p) {
+    // desbloqueio por tempo (E/S ou page fault)
     if (p->blocked_until > 0 && p->blocked_until <= now) {
       console_printf("SO: desbloqueando PID %d (agora=%d)", p->pid, now);
       p->blocked_until = 0;
-      // se não há processo corrente, escalar este processo como corrente
-      if (self->proc_corrente == NULL) {
-        self->proc_corrente = p;
+      fila_push(&self->fila_prontos, p);
+    }
+    // desbloqueio por espera de processo
+    if (p->wait_pid > 0) {
+      processo_t *alvo = so_proc_pelo_pid(self, p->wait_pid);
+      if (!alvo) {
+        // processo alvo terminou
+        p->wait_pid = -1;
+        fila_push(&self->fila_prontos, p);
       }
     }
     p = p->next;
@@ -267,9 +283,11 @@ static void so_trata_pendencias(so_t *self)
 
 static void so_escalona(so_t *self)
 {
-  // Por enquanto, só existe o processo init
-  // Futuramente, aqui será feita a escolha do próximo processo pronto
-  // Se houver troca de processo, atualize a MMU:
+  // Escalonador round-robin: se não há processo corrente, pega da fila de prontos
+  if (!self->proc_corrente) {
+    self->proc_corrente = fila_pop(&self->fila_prontos);
+  }
+  // Atualiza MMU se houver processo corrente
   if (self->proc_corrente) {
     mmu_define_tabpag(self->mmu, self->proc_corrente->tabpag);
   }
@@ -282,15 +300,20 @@ static int so_despacha(so_t *self)
   //   senão retorna 1
   // o valor retornado será o valor de retorno de CHAMAC, e será colocado no 
   //   registrador A para o tratador de interrupção (ver trata_irq.asm).
-  if (mem_escreve(self->mem, CPU_END_A, self->regA) != ERR_OK
-      || mem_escreve(self->mem, CPU_END_PC, self->regPC) != ERR_OK
-      || mem_escreve(self->mem, CPU_END_erro, self->regERRO) != ERR_OK
-      || mem_escreve(self->mem, 59, self->regX)) {
-    console_printf("SO: erro na escrita dos registradores");
-    self->erro_interno = true;
+  if (self->proc_corrente) {
+    if (mem_escreve(self->mem, CPU_END_A, self->regA) != ERR_OK
+        || mem_escreve(self->mem, CPU_END_PC, self->regPC) != ERR_OK
+        || mem_escreve(self->mem, CPU_END_erro, self->regERRO) != ERR_OK
+        || mem_escreve(self->mem, 59, self->regX)) {
+      console_printf("SO: erro na escrita dos registradores");
+      self->erro_interno = true;
+    }
+    if (self->erro_interno) return 1;
+    else return 0;
+  } else {
+    // sem processo pronto: CPU PARA
+    return 1;
   }
-  if (self->erro_interno) return 1;
-  else return 0;
 }
 
 
@@ -479,24 +502,15 @@ static void so_trata_irq_err_cpu(so_t *self)
     // marca quadro como pertencente ao processo
     quadros_assign(self->quadros, quadro, proc->pid, pagina);
     proc->page_faults += 1;
-    // calcula número de transferências de página (writeback da vítima + leitura)
-    int transfers = 1; // sempre precisa ler a página solicitada
+    // calcula número de transferências de página (sempre 1 leitura, +1 se writeback)
+    int transfers = 1;
     if (need_writeback) transfers += 1;
-    // simula o tempo de transferência: se houve escrita de volta (antes), conta mais uma transferência
-    // (we detect writeback by checking if the page we selected earlier was altered using tabpag_bit_alteracao on the owner before invalidation)
-    // For simplicity, inspect proc->page_faults change and approximate; a more precise implementation would record 'need_writeback'.
-    // Atualiza tempo do disco e bloqueia processo
     int now = 0;
     if (es_le(self->es, D_RELOGIO_INSTRUCOES, &now) != ERR_OK) {
       console_printf("SO: erro ao ler relogio para calcular tempo de disco");
       self->erro_interno = true;
       return;
     }
-    // calcular número de transferências exatas: se uma vitima foi removida e ela foi alterada, transfers++
-    // (a detecção precisa usar informação salva antes da invalidação; for now, check page_faults increment heuristically)
-    // A implementação acima já copiou de volta se necessário, portanto vamos apenas somar 1 extra quando removemos uma vítima que tinha bit de alteração.
-    // To detect that, we can check the tabpag_bit_alteracao of the 'dono' we handled earlier — but that tabpag was invalidated. Simpler: if vitima != -1, assume worst-case (one writeback).
-    if (vitima != -1) transfers +=  (/*assume possible writeback*/ 1);
     if (self->disco_livre_em <= now) self->disco_livre_em = now + transfers * self->tempo_transferencia_pagina;
     else self->disco_livre_em += transfers * self->tempo_transferencia_pagina;
     proc->blocked_until = self->disco_livre_em;
@@ -525,13 +539,14 @@ static void so_trata_irq_relogio(so_t *self)
     console_printf("SO: problema da reinicialização do timer");
     self->erro_interno = true;
   }
-  // t2: deveria tratar a interrupção
-  //   por exemplo, decrementa o quantum do processo corrente, quando se tem
-  //   um escalonador com quantum
-  // Envelhecimento (LRU aproximado): envelhece páginas do processo corrente
-  if (self->proc_corrente && self->proc_corrente->tabpag) {
-    tabpag_envelhece(self->proc_corrente->tabpag);
+  // Exemplo de quantum fixo: a cada interrupção, coloca o processo corrente no fim da fila de prontos
+  if (self->proc_corrente) {
+    fila_push(&self->fila_prontos, self->proc_corrente);
+    self->proc_corrente = NULL;
   }
+  // Envelhecimento (LRU aproximado): envelhece páginas do processo corrente (antes de trocar)
+  // (Opcional: pode envelhecer todos os processos, mas aqui só o corrente)
+  // (Se quiser envelhecer todos, faça um loop em proc_list)
 }
 
 // foi gerada uma interrupção para a qual o SO não está preparado
@@ -667,35 +682,109 @@ static void so_chamada_cria_proc(so_t *self)
   // quem chamou o sistema não vai mais ser executado, coitado!
   // t2: deveria criar um novo processo
   // t3: identifica direito esses processos
-  processo_t *processo_criador = NULL;
-  processo_t *processo_criado = NULL;
-
-  // em X está o endereço onde está o nome do arquivo
-  int ender_proc;
-  // t2: deveria ler o X do descritor do processo criador
-  ender_proc = self->regX;
+  // processo corrente é o criador
+  processo_t *criador = self->proc_corrente;
+  if (!criador) { self->regA = -1; return; }
+  int ender_proc = self->regX;
   char nome[100];
-  if (so_copia_str_do_processo(self, 100, nome, ender_proc, processo_criador)) {
-    int ender_carga = so_carrega_programa(self, processo_criado, nome);
-    if (ender_carga != -1) {
-      // t2: deveria escrever no PC do descritor do processo criado
-      self->regPC = ender_carga;
-      return;
-    } // else?
+  if (!so_copia_str_do_processo(self, 100, nome, ender_proc, criador)) {
+    self->regA = -1;
+    return;
   }
-  // deveria escrever -1 (se erro) ou o PID do processo criado (se OK) no reg A
-  //   do processo que pediu a criação
-  self->regA = -1;
+  // gera novo PID
+  int max_pid = 1;
+  for (processo_t *p = self->proc_list; p; p = p->next) if (p->pid >= max_pid) max_pid = p->pid + 1;
+  processo_t *novo = processo_cria(max_pid, 4096); // tamanho virtual fixo (pode ser ajustado)
+  if (!novo) { self->regA = -1; return; }
+  int ender_carga = so_carrega_programa(self, novo, nome);
+  if (ender_carga == -1) { processo_destroi(novo); self->regA = -1; return; }
+  // registra novo processo
+  so_registra_processo(self, novo);
+  // retorna PID do novo processo no regA do criador
+  self->regA = novo->pid;
 }
 
 // implementação da chamada se sistema SO_MATA_PROC
 // mata o processo com pid X (ou o processo corrente se X é 0)
 static void so_chamada_mata_proc(so_t *self)
 {
-  // t2: deveria matar um processo
-  // ainda sem suporte a processos, retorna erro -1
-  console_printf("SO: SO_MATA_PROC não implementada");
-  self->regA = -1;
+  // mata o processo com pid em X (0 -> processo corrente)
+  int pid = self->regX;
+  if (pid == 0) {
+    if (!self->proc_corrente) {
+      self->regA = -1;
+      return;
+    }
+    pid = self->proc_corrente->pid;
+  }
+  processo_t *proc = so_proc_pelo_pid(self, pid);
+  if (!proc) {
+    console_printf("SO: SO_MATA_PROC: pid %d nao encontrado", pid);
+    self->regA = -1;
+    return;
+  }
+  console_printf("SO: matando PID %d", pid);
+  // gravar de volta páginas sujas e invalidar entradas, para cada quadro que pertence ao processo
+  int nq = quadros_numero_quadros(self->quadros);
+  for (int q = 0; q < nq; q++) {
+    int dono = quadros_owner_pid(self->quadros, q);
+    if (dono != pid) continue;
+    int pagina = quadros_owner_pagina(self->quadros, q);
+    if (pagina < 0) continue;
+    // se página alterada, escrever de volta
+    if (tabpag_bit_alteracao(proc->tabpag, pagina)) {
+      for (int off = 0; off < TAM_PAGINA; off++) {
+        int val;
+        if (mem_le(self->mem, q * TAM_PAGINA + off, &val) != ERR_OK) {
+          console_printf("SO: erro ao ler quadro %d para escrita de volta durante kill", q);
+          self->erro_interno = true;
+          return;
+        }
+        int sec_addr = proc->sec_base + pagina * TAM_PAGINA + off;
+        if (mem_escreve(self->mem_secundaria, sec_addr, val) != ERR_OK) {
+          console_printf("SO: erro ao escrever memoria secundaria addr %d durante kill", sec_addr);
+          self->erro_interno = true;
+          return;
+        }
+      }
+    }
+    // invalida a pagina na tabela
+    tabpag_invalida_pagina(proc->tabpag, pagina);
+  }
+  // libera todos os quadros pertencentes ao pid
+  quadros_free_pid(self->quadros, pid);
+  // limpa a região da memória secundária usada por esse processo (se conhecida)
+  if (proc->sec_base >= 0 && proc->sec_size > 0) {
+    // opcional: limpar conteúdo
+    for (int i = 0; i < proc->sec_size; i++) {
+      if (mem_escreve(self->mem_secundaria, proc->sec_base + i, 0) != ERR_OK) {
+        console_printf("SO: erro ao limpar memoria secundaria addr %d durante kill", proc->sec_base + i);
+        break;
+      }
+    }
+    // devolve a região ao alocador, se existir
+    if (self->sec_alloc) sec_alloc_free(self->sec_alloc, proc->sec_base, proc->sec_size);
+    proc->sec_base = -1;
+    proc->sec_size = 0;
+  }
+  // remove da lista de processos
+  processo_t *prev = NULL;
+  processo_t *p = self->proc_list;
+  while (p) {
+    if (p->pid == pid) break;
+    prev = p;
+    p = p->next;
+  }
+  if (p) {
+    if (prev) prev->next = p->next;
+    else self->proc_list = p->next;
+  }
+  // se era o processo corrente, desescalona
+  if (self->proc_corrente && self->proc_corrente->pid == pid) {
+    self->proc_corrente = NULL;
+  }
+  processo_destroi(p);
+  self->regA = 0; // sucesso
 }
 
 // implementação da chamada se sistema SO_ESPERA_PROC
@@ -773,10 +862,22 @@ static int so_carrega_programa_na_memoria_virtual(so_t *self,
 
   // Aloca espaço contíguo na memória secundária para o programa
   // (Aqui, para simplificação, assume-se que a memória secundária tem espaço suficiente e começa em 0)
-  int end_sec_ini = proc->pid * 10000; // Exemplo: cada processo tem "faixa" de 10000 posições
-  for (int i = 0; i < prog_tamanho(programa); i++) {
+  int np = prog_tamanho(programa);
+  int end_sec_ini = -1;
+  if (self->sec_alloc) {
+    end_sec_ini = sec_alloc_alloc(self->sec_alloc, np);
+    if (end_sec_ini == -1) {
+      console_printf("SO: sem espaço na memoria secundaria para carregar programa\n");
+      return -1;
+    }
+  } else {
+    // fallback antigo: faixa por pid
+    end_sec_ini = proc->pid * 10000;
+  }
+  for (int i = 0; i < np; i++) {
     if (mem_escreve(self->mem_secundaria, end_sec_ini + i, prog_dado(programa, end_virt_ini + i)) != ERR_OK) {
       console_printf("Erro na carga da memória secundária, end %d\n", end_sec_ini + i);
+      if (self->sec_alloc && end_sec_ini >= 0) sec_alloc_free(self->sec_alloc, end_sec_ini, np);
       return -1;
     }
   }
@@ -784,6 +885,7 @@ static int so_carrega_programa_na_memoria_virtual(so_t *self,
   // registra a base na memória secundária e zera contador de faltas
   proc->sec_base = end_sec_ini;
   proc->page_faults = 0;
+  proc->sec_size = np;
 
   // Inicializa a tabela de páginas do processo: todas as páginas inválidas
   for (int p = pagina_ini; p <= pagina_fim; p++) {

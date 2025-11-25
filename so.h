@@ -25,12 +25,18 @@ typedef struct processo_t {
     int tam_mem_virtual;
     // endereço base na memória secundária (onde o programa foi salvo)
     int sec_base;
+    // tamanho (em palavras) da região alocada na memória secundária para este processo
+    int sec_size;
     // contador de faltas de página para este processo
     int page_faults;
+    int page_transfers;
+    int tempo_bloqueado;
     // até quando o processo está bloqueado por operação de disco (em instruções)
     int blocked_until;
     // ponteiro para o próximo processo na lista do SO
     struct processo_t *next;
+    // PID que este processo está esperando (ou -1 se não espera)
+    int wait_pid;
     // outros campos do processo podem ser adicionados aqui
 } processo_t;
 
@@ -42,10 +48,14 @@ typedef struct so_t {
     mmu_t *mmu;
     es_t *es;
     console_t *console;
+    // alocador para memória secundária
+    struct sec_alloc_t *sec_alloc;
     bool erro_interno;
     int regA, regX, regPC, regERRO, regComplemento;
     int quadro_livre;
     processo_t *proc_corrente;
+    // fila de prontos (round-robin)
+    struct proc_node_t *fila_prontos;
     // lista encadeada de processos gerenciados pelo SO
     processo_t *proc_list;
     // gerenciador de quadros (memória principal)
@@ -56,6 +66,10 @@ typedef struct so_t {
     int disco_livre_em;
     // tempo (em instruções) para transferir UMA página entre mem e mem_secundaria
     int tempo_transferencia_pagina;
+    // métricas globais
+    int total_page_faults;
+    int total_page_transfers;
+    int total_tempo_bloqueado;
     // outros campos futuros: lista de processos, etc
 } so_t;
 
