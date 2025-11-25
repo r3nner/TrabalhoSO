@@ -1,4 +1,4 @@
-# TrabalhoSOok
+# TrabalhoSO
 
 Este repositório está organizado em duas entregas:
 
