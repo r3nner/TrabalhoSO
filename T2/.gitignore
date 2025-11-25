@@ -1,0 +1,41 @@
+# Executáveis
+main
+montador
+
+# Arquivos objeto
+*.o
+
+# Arquivos de dependências
+*.d
+
+# Arquivos montados (.maq são executáveis gerados pelo montador)
+*.maq
+
+# Arquivos de backup do editor
+*~
+*.swp
+*.swo
+*.bak
+
+# Arquivos de debug
+*.gdb
+vgcore.*
+core
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
+
+# Diretórios de build (caso existam)
+build/
+bin/
+obj/
+
+# Arquivos temporários
+*.tmp
+*.log
+
+# Artefatos locais
+.vscode/
+analise_rr.txt
+analise_prio.txt

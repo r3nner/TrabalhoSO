@@ -123,26 +123,6 @@ static processo_t *so_proc_pelo_pid(so_t *self, int pid) {
   return NULL;
 }
 
-// Callback para obter idade da página (usado no LRU)
-static bool get_age_cb(int pid, int pagina, unsigned *page_age, void *user_data) {
-  so_t *so = user_data;
-  processo_t *p = so_proc_pelo_pid(so, pid);
-  if (!p) return false;
-  return tabpag_get_age(p->tabpag, pagina, page_age);
-}
-
-// Imprime resumo de desempenho dos processos (será usada em testes futuros)
-#if 0
-static void so_resumo_desempenho(so_t *self) {
-  console_printf("\n==== RESUMO DE DESEMPENHO ====");
-  processo_t *p = self->proc_list;
-  while (p) {
-    console_printf("PID %d: Falhas de página = %d, Último bloqueio = %d", p->pid, p->page_faults, p->blocked_until);
-    p = p->next;
-  }
-  console_printf("============================\n");
-}
-#endif
 
 // função de tratamento de interrupção (entrada no SO)
 static int so_trata_interrupcao(void *argC, int reg_A);
@@ -188,10 +168,6 @@ so_t *so_cria(cpu_t *cpu, mem_t *mem, mem_t *mem_secundaria, mmu_t *mmu,
   cpu_define_chamaC(self->cpu, so_trata_interrupcao, self);
   // Não há tabela de páginas global, cada processo terá a sua
   return self;
-// Chame o resumo ao final da execução do SO (exemplo: após todos os processos terminarem)
-// Você pode inserir a chamada em um ponto apropriado, como após o loop principal ou antes do exit
-// Exemplo:
-// so_resumo_desempenho(self);
 }
 
 void so_destroi(so_t *self)
@@ -311,8 +287,8 @@ static void so_escalona(so_t *self)
   if (!self->proc_corrente) {
     self->proc_corrente = fila_pop(&self->fila_prontos);
   }
-  // Atualiza MMU para usar a tabela de páginas do processo corrente
-  if (self->proc_corrente && self->proc_corrente->tabpag) {
+  // Atualiza MMU se houver processo corrente
+  if (self->proc_corrente) {
     mmu_define_tabpag(self->mmu, self->proc_corrente->tabpag);
   }
 }
@@ -455,6 +431,13 @@ static void so_trata_irq_err_cpu(so_t *self)
     if (quadro == -1) {
       // escolhe vitima: LRU ou FIFO
       if (self->usar_lru) {
+        // define callback that looks up process by pid and asks its tabpag for age
+        bool get_age_cb(int pid, int pagina, unsigned *page_age, void *user_data) {
+          so_t *so = user_data;
+          processo_t *p = so_proc_pelo_pid(so, pid);
+          if (!p) return false;
+          return tabpag_get_age(p->tabpag, pagina, page_age);
+        }
         vitima = quadros_seleciona_vitima_lru(self->quadros, get_age_cb, self);
       } else {
         vitima = quadros_seleciona_vitima(self->quadros);
