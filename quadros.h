@@ -6,6 +6,7 @@
 #define QUADROS_H
 
 #include "memoria.h"
+#include <stdbool.h>
 
 typedef struct quadros_t quadros_t;
 
@@ -35,5 +36,10 @@ int quadros_owner_pid(quadros_t *self, int quadro);
 
 // obtém a página dona do quadro (ou -1 se livre)
 int quadros_owner_pagina(quadros_t *self, int quadro);
+
+// seleciona vítima usando LRU: recebe um callback para obter a 'age' da página
+// callback deve retornar true e preencher *page_age se a página existir, ou false caso contrário
+// a função user_data é repassada ao callback
+int quadros_seleciona_vitima_lru(quadros_t *self, bool (*get_age_cb)(int pid, int pagina, unsigned *page_age, void *user_data), void *user_data);
 
 #endif // QUADROS_H

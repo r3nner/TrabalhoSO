@@ -17,6 +17,8 @@ typedef struct {
   bool acessada;
   // a página foi alterada ou não
   bool alterada;
+  // contador para envelhecimento (LRU aproximado)
+  unsigned age;
 } descritor_t;
 
 struct tabpag_t {
@@ -100,6 +102,7 @@ void tabpag_define_quadro(tabpag_t *self, int pagina, int quadro)
   self->tabela[pagina].valida = true;
   self->tabela[pagina].acessada = false;
   self->tabela[pagina].alterada = false;
+  self->tabela[pagina].age = 0;
 }
 
 void tabpag_marca_bit_acesso(tabpag_t *self, int pagina, bool alteracao)
@@ -127,6 +130,31 @@ bool tabpag_bit_alteracao(tabpag_t *self, int pagina)
 {
   if (!tabpag__pagina_valida(self, pagina)) return false;
   return self->tabela[pagina].alterada;
+}
+
+void tabpag_envelhece(tabpag_t *self)
+{
+  if (!self || self->tam_tab == 0) return;
+  // define MSB mask
+  unsigned msb = 1u << (sizeof(unsigned) * 8 - 1);
+  for (int i = 0; i < self->tam_tab; i++) {
+    if (!self->tabela[i].valida) continue;
+    // shift right
+    self->tabela[i].age >>= 1;
+    // if accessed, set MSB
+    if (self->tabela[i].acessada) {
+      self->tabela[i].age |= msb;
+    }
+    // clear access bit
+    self->tabela[i].acessada = false;
+  }
+}
+
+bool tabpag_get_age(tabpag_t *self, int pagina, unsigned *page_age)
+{
+  if (!tabpag__pagina_valida(self, pagina)) return false;
+  if (page_age) *page_age = self->tabela[pagina].age;
+  return true;
 }
 
 err_t tabpag_traduz(tabpag_t *self, int pagina, int *pquadro)

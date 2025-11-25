@@ -50,6 +50,8 @@ typedef struct so_t {
     processo_t *proc_list;
     // gerenciador de quadros (memória principal)
     struct quadros_t *quadros;
+    // se true usa LRU; se false usa FIFO
+    int usar_lru;
     // tempo em que o disco (mem secundaria) estará livre (em instruções)
     int disco_livre_em;
     // tempo (em instruções) para transferir UMA página entre mem e mem_secundaria

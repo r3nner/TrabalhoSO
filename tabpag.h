@@ -61,4 +61,11 @@ bool tabpag_bit_alteracao(tabpag_t *self, int pagina);
 // retorna ERR_PAG_AUSENTE (e não altera '*pquadro') se a página for inválida
 err_t tabpag_traduz(tabpag_t *self, int pagina, int *pquadro);
 
+// envelhece os contadores de acesso das páginas (LRU aproximado)
+// Para cada página válida: age >>= 1; if bit_acesso então age |= MSB; zera bit_acesso.
+void tabpag_envelhece(tabpag_t *self);
+
+// obtém o contador de envelhecimento da página; retorna false se página inválida
+bool tabpag_get_age(tabpag_t *self, int pagina, unsigned *page_age);
+
 #endif // TABPAG_H

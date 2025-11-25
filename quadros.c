@@ -64,6 +64,27 @@ int quadros_seleciona_vitima(quadros_t *self)
   return self->fifo_queue[self->fifo_head];
 }
 
+int quadros_seleciona_vitima_lru(quadros_t *self, bool (*get_age_cb)(int pid, int pagina, unsigned *page_age, void *user_data), void *user_data)
+{
+  if (self->fifo_count == 0) return -1;
+  int best = -1;
+  unsigned best_age = 0xffffffffu; // choose smallest age
+  for (int i = 0; i < self->n_quadros; i++) {
+    if (self->is_free[i]) continue;
+    int pid = self->owner_pid[i];
+    int pagina = self->owner_pagina[i];
+    unsigned age;
+    if (!get_age_cb(pid, pagina, &age, user_data)) continue;
+    if (best == -1 || age < best_age) {
+      best = i;
+      best_age = age;
+    }
+  }
+  // if no candidate found (callback failed), fall back to FIFO
+  if (best == -1) return quadros_seleciona_vitima(self);
+  return best;
+}
+
 int quadros_remove_vitima(quadros_t *self)
 {
   if (self->fifo_count == 0) return -1;

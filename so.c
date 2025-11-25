@@ -153,6 +153,7 @@ so_t *so_cria(cpu_t *cpu, mem_t *mem, mem_t *mem_secundaria, mmu_t *mmu,
   self->erro_interno = false;
   self->proc_list = NULL;
   self->quadros = quadros_cria(self->mem);
+  self->usar_lru = 1; // habilita LRU por padrão
   // disco: quando estará livre (em instruções)
   self->disco_livre_em = 0;
   // tempo (em instruções) para transferir UMA página entre mem e mem_sec
@@ -405,8 +406,19 @@ static void so_trata_irq_err_cpu(so_t *self)
   int vitima = -1;
   bool need_writeback = false;
     if (quadro == -1) {
-      // escolhe vitima FIFO
-      vitima = quadros_seleciona_vitima(self->quadros);
+      // escolhe vitima: LRU ou FIFO
+      if (self->usar_lru) {
+        // define callback that looks up process by pid and asks its tabpag for age
+        bool get_age_cb(int pid, int pagina, unsigned *page_age, void *user_data) {
+          so_t *so = user_data;
+          processo_t *p = so_proc_pelo_pid(so, pid);
+          if (!p) return false;
+          return tabpag_get_age(p->tabpag, pagina, page_age);
+        }
+        vitima = quadros_seleciona_vitima_lru(self->quadros, get_age_cb, self);
+      } else {
+        vitima = quadros_seleciona_vitima(self->quadros);
+      }
       if (vitima == -1) {
         console_printf("SO: nao ha quadro para substituir (nenhuma pagina alocada)");
         self->erro_interno = true;
@@ -516,7 +528,10 @@ static void so_trata_irq_relogio(so_t *self)
   // t2: deveria tratar a interrupção
   //   por exemplo, decrementa o quantum do processo corrente, quando se tem
   //   um escalonador com quantum
-  console_printf("SO: interrupção do relógio (não tratada)");
+  // Envelhecimento (LRU aproximado): envelhece páginas do processo corrente
+  if (self->proc_corrente && self->proc_corrente->tabpag) {
+    tabpag_envelhece(self->proc_corrente->tabpag);
+  }
 }
 
 // foi gerada uma interrupção para a qual o SO não está preparado
