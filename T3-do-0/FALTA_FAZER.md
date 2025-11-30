@@ -28,9 +28,10 @@
 5. **Variação do tamanho de página**
    - `CONFIG_TAM_PAGINA` pequeno (ex.: 4) e grande (≥ 4× o padrão).
    - Recompilar e rodar testes, comparando falhas e tempo total.
-6. **Algoritmo FIFO vs LRU**
-   - Alternar `CONFIG_ALGORITMO_SUBSTITUICAO` entre `SUBSTITUICAO_FIFO` e `SUBSTITUICAO_LRU`. Altere ainda os escalonadores com essas opções.
-   - Registrar diferenças de substituição (consultar logs para carimbo FIFO vs idade LRU).
+6. **Algoritmo FIFO vs LRU / Escalonadores**
+   - Alternar `CONFIG_ALGORITMO_SUBSTITUICAO` entre `SUBSTITUICAO_FIFO` e `SUBSTITUICAO_LRU`.
+   - Para cada algoritmo, rodar tanto o Round Robin quanto o escalonador por prioridade.
+   - Registrar diferenças de substituição (consultar logs para carimbo FIFO vs idade LRU) e comportamento do escalonamento.
 7. **Stress de criação de processos**
    - Rodar programas que criem filhos (`p1.maq`, `p2.maq` etc.) após `init`.
    - Verificar fila de prontos e desbloqueios em `log_da_console`.
@@ -48,3 +49,11 @@
 - Documentar no Relatório do T3 os experimentos exigidos (memória/ página/ algoritmo) usando os logs coletados.
 - Validar comportamento com interrupções de E/S intensivas (terminais) e garantir desbloqueio correto.
 - Revisar dependências/headers se novos arquivos forem adicionados para relatório automatizado.
+- Conferir se o relatório do T2 está completo, incluindo execuções com Round Robin e Prioridade, além da análise dos tempos.
+- No relatório do T3, comparar explicitamente os modos de substituição da MMU (LRU e FIFO) em múltiplas configurações.
+- Excluir o T3 do repositório e renomear T3-DO-0 para T3
+
+## Próximos Passos de Coordenação
+
+- Confirmar com o pessoal que já testou o T3 quais cenários eles cobriram e reproduzir os passos.
+- Quando todos os testes estiverem concluídos, enviar email novamente para o BenHur
