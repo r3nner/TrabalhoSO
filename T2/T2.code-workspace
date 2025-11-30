@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../../../../../../Downloads/arquivos alterados para o t3"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"console.h": "c",
+			"es.h": "c",
+			"cpu.h": "c"
+		}
+	}
+}

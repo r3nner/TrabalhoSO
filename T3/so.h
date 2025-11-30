@@ -6,81 +6,76 @@
 #ifndef SO_H
 #define SO_H
 
-#include <stdbool.h>
 #include "memoria.h"
-#include "mmu.h"
 #include "cpu.h"
 #include "es.h"
 #include "console.h" // só para uma gambiarra
-#include "tabpag.h"
 
-typedef struct proc_node_t proc_node_t;
-typedef struct processo_t processo_t; // forward declaration used in fila_* prototypes
-void fila_push(proc_node_t **fila, processo_t *proc);
-processo_t *fila_pop(proc_node_t **fila);
+// Define qual escalonador está em uso
+typedef enum {
+  ESCAL_CIRCULAR,   // Round-Robin
+  ESCAL_PRIORIDADE  // Prioridade com preempção
+} tipo_escalonador_t;
 
-typedef struct processo_t {
-    int pid;
-    tabpag_t *tabpag;
-    int tam_mem_virtual;
-    // endereço base na memória secundária (onde o programa foi salvo)
-    int sec_base;
-    // tamanho (em palavras) da região alocada na memória secundária para este processo
-    int sec_size;
-    // contador de faltas de página para este processo
-    int page_faults;
-    int page_transfers;
-    int tempo_bloqueado;
-    // até quando o processo está bloqueado por operação de disco (em instruções)
-    int blocked_until;
-    // ponteiro para o próximo processo na lista do SO
-    struct processo_t *next;
-    // PID que este processo está esperando (ou -1 se não espera)
-    int wait_pid;
-    // outros campos do processo podem ser adicionados aqui
+// Estado de um processo
+typedef enum {
+  LIVRE,
+  PRONTO,
+  EXECUTANDO,
+  BLOQUEADO,
+  TERMINADO
+} estado_processo_t;
+
+// Motivo pelo qual um processo está bloqueado
+typedef enum {
+  BLOQUEIO_NENHUM,
+  BLOQUEIO_PID,     // Esperando um processo (pid_esperado)
+  BLOQUEIO_IO_LE,   // Esperando para ler (dispositivo_esperado)
+  BLOQUEIO_IO_ESCR  // Esperando para escrever (dispositivo_esperado)
+} motivo_bloqueio_t;
+
+// Estrutura para salvar o estado da CPU de um processo
+typedef struct {
+  int regA;
+  int regX;
+  int regPC;
+  int regERRO;
+} estado_cpu_t;
+
+// Process Control Block (PCB)
+typedef struct {
+  estado_processo_t estado;
+  int pid;                  // "Número de série" do processo
+  estado_cpu_t estado_cpu;
+  int terminal;             // Dispositivo de E/S (D_TERM_A, D_TERM_B, etc.)
+
+  // --- Campos para Bloqueio (Parte II) ---
+  motivo_bloqueio_t motivo_bloqueio;
+  int pid_esperado;             // PID do processo que este espera (se motivo_bloqueio == BLOQUEIO_PID)
+  int dispositivo_esperado;   // Terminal (D_TERM_A, etc.) que este espera (se motivo_bloqueio == BLOQUEIO_IO_*)
+
+  // --- Campos de Escalonamento e Métricas (Parte III) ---
+  float prioridade;                 // Para o escalonador de prioridade
+  int tempo_criacao;                // "Data" de criação (em ticks)
+  int tempo_termino;                // "Data" de término (em ticks)
+  int num_preempcoes;               // Quantas vezes foi preemptado
+
+  // Métricas de estado
+  int contagem_estado[5];           // Contagem de quantas vezes entrou em cada estado
+  int tempo_total_estado[5];        // Tempo total (em ticks) gasto em cada estado
+  int ultimo_tempo_mudanca_estado;  // "Data" da última mudança de estado
+
+  // Métricas de tempo de resposta (tempo em PRONTO)
+  int tempo_total_pronto;           // Tempo total gasto na fila de PRONTO
+  int ultimo_tempo_pronto;          // "Data" da última vez que entrou em PRONTO
 } processo_t;
 
+#define MAX_PROCESSOS 10
 
-typedef struct so_t {
-    cpu_t *cpu;
-    mem_t *mem;
-    mem_t *mem_secundaria;
-    mmu_t *mmu;
-    es_t *es;
-    console_t *console;
-    // alocador para memória secundária
-    struct sec_alloc_t *sec_alloc;
-    bool erro_interno;
-    int regA, regX, regPC, regERRO, regComplemento;
-    int quadro_livre;
-    processo_t *proc_corrente;
-    // fila de prontos (round-robin)
-    struct proc_node_t *fila_prontos;
-    // lista encadeada de processos gerenciados pelo SO
-    processo_t *proc_list;
-    // gerenciador de quadros (memória principal)
-    struct quadros_t *quadros;
-    // se true usa LRU; se false usa FIFO
-    int usar_lru;
-    // tempo em que o disco (mem secundaria) estará livre (em instruções)
-    int disco_livre_em;
-    // tempo (em instruções) para transferir UMA página entre mem e mem_secundaria
-    int tempo_transferencia_pagina;
-    // métricas globais
-    int total_page_faults;
-    int total_page_transfers;
-    int total_tempo_bloqueado;
-    // outros campos futuros: lista de processos, etc
-} so_t;
+typedef struct so_t so_t;
 
-// Adiciona ponteiro para memória secundária
-so_t *so_cria(cpu_t *cpu, mem_t *mem, mem_t *mem_secundaria, mmu_t *mmu,
-              es_t *es, console_t *console);
+so_t *so_cria(cpu_t *cpu, mem_t *mem, es_t *es, console_t *console);
 void so_destroi(so_t *self);
-
-// Criação e destruição de processos (agora explícitas)
-processo_t *processo_cria(int pid, int tam_mem_virtual);
-void processo_destroi(processo_t *proc);
 
 // Chamadas de sistema
 // Uma chamada de sistema é realizada colocando a identificação da

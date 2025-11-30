@@ -34,3 +34,8 @@ obj/
 # Arquivos temporários
 *.tmp
 *.log
+
+# Artefatos locais
+.vscode/
+analise_rr.txt
+analise_prio.txt
