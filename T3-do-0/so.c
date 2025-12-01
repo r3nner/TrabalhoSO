@@ -232,7 +232,7 @@ so_t *so_cria(cpu_t *cpu, mem_t *mem, mmu_t *mmu, es_t *es, console_t *console)
     console_printf("SO: Memória física menor que uma página (%d)", tam_mem);
     self->erro_interno = true;
   } else {
-    int num_paginas_sec = num_quadros;
+    int num_paginas_sec = num_quadros * CONFIG_FATOR_MEM_SECUNDARIA;
     self->vm_estado = vm_estado_cria(num_quadros, num_paginas_sec);
     if (self->vm_estado != NULL) {
       int tam_sec = num_paginas_sec * TAM_PAGINA;
@@ -1189,7 +1189,6 @@ static void so_proc_liberacao_recursos(so_t *self, processo_t *proc)
     tabpag_destroi(proc->tabela_paginas);
     proc->tabela_paginas = NULL;
   }
-  proc->falhas_pagina = 0;
 
   if (self->vm_estado != NULL) {
     int num_quadros = vm_estado_num_quadros(self->vm_estado);
@@ -1219,7 +1218,6 @@ static void so_proc_liberacao_recursos(so_t *self, processo_t *proc)
     free(proc->indices_pagsec);
     proc->indices_pagsec = NULL;
   }
-  proc->num_paginas_secundarias = 0;
   proc->tamanho_programa = 0;
   proc->end_virtual_base = 0;
   proc->tempo_desbloqueio = 0;
